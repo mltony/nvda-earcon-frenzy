@@ -9,7 +9,7 @@ import api
 import bisect
 import config
 import controlTypes
-from controlTypes import OutputReason, Role
+from controlTypes import OutputReason, Role, State
 import copy
 import core
 import ctypes
@@ -43,7 +43,7 @@ import ui
 import wave
 import wx
 
-debug = False
+debug = True
 if debug:
     f = open("C:\\Users\\tony\\Dropbox\\1.txt", "w", encoding="utf-8")
     LOG_MUTEX = threading.Lock()
@@ -246,6 +246,20 @@ def getSoundsPath():
 if True:
     wavFile = os.path.join(getSoundsPath(), r"unspoken\button.wav")
     buttonCommand = PpWaveFileCommand(
+        wavFile,
+        startAdjustment=0,
+        endAdjustment=0,
+        volume=100,
+    )
+    wavFile = os.path.join(getSoundsPath(), r"classic\on.wav")
+    onCommand = PpWaveFileCommand(
+        wavFile,
+        startAdjustment=0,
+        endAdjustment=0,
+        volume=100,
+    )
+    wavFile = os.path.join(getSoundsPath(), r"classic\off.wav")
+    offCommand = PpWaveFileCommand(
         wavFile,
         startAdjustment=0,
         endAdjustment=0,
@@ -974,6 +988,7 @@ class RulesDialog(SettingsPanel):
         rulesDialogOpen = False
 
 original_getPropertiesSpeech = None
+original_processAndLabelStates = None
 originalSpeechCancel = None
 originalTonesInitialize = None
 
@@ -984,15 +999,56 @@ def new_getPropertiesSpeech(
     #tones.beep(500, 50)
     if config.conf[pp]["enabled"] and not rulesDialogOpen:
         role = propertyValues.get('role')
+        _role = propertyValues.get('_role')
         states = propertyValues.get('states')
+        realStates=propertyValues.get('_states', states)
+        negativeStates=propertyValues.get('negativeStates', set())
         if role is not None and states is  None:
             # Speaking role
             if role == Role.BUTTON:
-                return [buttonCommand]
-        elif role is not None and states is not None:
+                #return [buttonCommand]
+                #tones.beep(500, 50)
+                propertyValues['roleText'] = buttonCommand
+                
+        elif states is not None or negativeStates:
             #speaking states
+            if states is None:
+                states = set()
+            if False and _role == Role.CHECKBOX:
+                tones.beep(500, 50)
+                mylog(f"states={states}")
+                mylog(f"realStates={realStates}")
+                mylog(f"negativeStates={negativeStates}")
+                mylog(propertyValues)
             pass
     return original_getPropertiesSpeech(        reason, **propertyValues)
+    
+def new_processAndLabelStates(
+        role: Role,
+        states,
+        reason: OutputReason,
+        positiveStates,
+        negativeStates,
+        positiveStateLabelDict=None,
+        negativeStateLabelDict=None,
+):
+    positiveStateLabelDict = positiveStateLabelDict or {}
+    negativeStateLabelDict = negativeStateLabelDict or {}
+    if config.conf[pp]["enabled"] and not rulesDialogOpen:
+        positiveStateLabelDict[State.CHECKED] = onCommand
+        negativeStateLabelDict[State.CHECKED] = offCommand
+    return original_processAndLabelStates(
+        role,
+        states,
+        reason,
+        positiveStates,
+        negativeStates,
+        positiveStateLabelDict,
+        negativeStateLabelDict,
+    )
+
+    
+
 
 def preCancelSpeech(*args, **kwargs):
     localCurrentChain = currentChain
@@ -1075,17 +1131,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(RulesDialog)
 
     def injectSpeechInterceptor(self):
-        global original_getPropertiesSpeech, originalSpeechCancel, originalTonesInitialize
+        global original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
         original_getPropertiesSpeech = speech.speech.getPropertiesSpeech
         speech.speech.getPropertiesSpeech = new_getPropertiesSpeech
+        original_processAndLabelStates = controlTypes.processAndLabelStates
+        controlTypes.processAndLabelStates = new_processAndLabelStates
         originalSpeechCancel = speech.cancelSpeech
         speech.cancelSpeech = preCancelSpeech
         originalTonesInitialize = tones.initialize
         tones.initialize = preTonesInitialize
 
     def  restoreSpeechInterceptor(self):
-        global original_getPropertiesSpeech, originalSpeechCancel, originalTonesInitialize
+        global original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
         speech.speech.getPropertiesSpeech = original_getPropertiesSpeech
+        controlTypes.processAndLabelStates = original_processAndLabelStates
         speech.cancelSpeech = originalSpeechCancel
         tones.initialize = originalTonesInitialize
 
