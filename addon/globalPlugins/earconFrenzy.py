@@ -1,6 +1,6 @@
 # -*- coding: UTF-8 -*-
-#A part of the Phonetic Punctuation addon for NVDA
-#Copyright (C) 2019 Tony Malykh
+#A part of the Earcon Frenzy addon for NVDA
+#Copyright (C) 2022 Tony Malykh
 #This file is covered by the GNU General Public License.
 #See the file COPYING.txt for more details.
 
@@ -9,6 +9,7 @@ import api
 import bisect
 import config
 import controlTypes
+from controlTypes import OutputReason, Role
 import copy
 import core
 import ctypes
@@ -17,6 +18,7 @@ import globalPluginHandler
 import globalVars
 import gui
 from gui import guiHelper, nvdaControls
+from gui.settingsDialogs import SettingsPanel
 import itertools
 import json
 from logHandler import log
@@ -43,7 +45,7 @@ import wx
 
 debug = False
 if debug:
-    f = open("C:\\Users\\tony\\Dropbox\\1.txt", "w")
+    f = open("C:\\Users\\tony\\Dropbox\\1.txt", "w", encoding="utf-8")
     LOG_MUTEX = threading.Lock()
 def mylog(s):
     if debug:
@@ -98,294 +100,12 @@ class ThreadPool:
 
 
 threadPool = ThreadPool(5)
-pp = "phoneticpunctuation"
+pp = "earconFrenzy"
 defaultRules = """
-[
-    {
-        "builtInWavFile": "3d\\help.wav",
-        "caseSensitive": true,
-        "comment": "String too long, to prevent synth from hanging.",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "(?<=^.{5000}).+(?=.{100}$)",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\voice-mail.wav",
-        "caseSensitive": true,
-        "comment": "Timestamp 1: I0113 11:25:50.843000 52 file.py:63] Message",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 300,
-        "pattern": "^[A-Z][0-9.: ]+[-a-zA-Z0-9:._]+\\]",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\voice-mail.wav",
-        "caseSensitive": true,
-        "comment": "Timestamp 2: 2020-01-16 14:43:35,208 module.build INFO: Message, or without INFO",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 300,
-        "pattern": "^\\d\\d\\d\\d-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d,\\d+ \\S+ (INFO|WARN|WARNING|DEBUG|ERROR)?:?",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\voice-mail.wav",
-        "caseSensitive": true,
-        "comment": "Timestamp 3: [16:09:16] Message",
-        "duration": null,
-        "enabled": true,
-        "endAdjustment": 300,
-        "pattern": "^\\[\\d\\d:\\d\\d:\\d\\d\\]",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": null,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\voice-mail.wav",
-        "caseSensitive": true,
-        "comment": "Timestamp 4: [INFO    ][2020-01-22 11:01:18,624][file.py:390  ] - message",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 300,
-        "pattern": "^\\[(INFO|DEBUG|WARN|WARNING|ERROR)\\s*\\]\\[[-0-9:, ]+\\]\\[[-a-zA-Z0-9.:_ ]+\\][- ]*",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\item.wav",
-        "caseSensitive": false,
-        "comment": "",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 100,
-        "pattern": "!",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "classic\\ask-short-question.wav",
-        "caseSensitive": true,
-        "comment": "",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 300,
-        "pattern": "@",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "punctuation\\Backslash.wav",
-        "caseSensitive": true,
-        "comment": "]",
-        "duration": 361,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\\\",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ".\\Backslash.wav"
-    },
-    {
-        "builtInWavFile": "punctuation\\LeftParen.wav",
-        "caseSensitive": true,
-        "comment": "(",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\(",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "punctuation\\RightParen.wav",
-        "caseSensitive": true,
-        "comment": ")",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\)",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "punctuation\\LeftBracket.wav",
-        "caseSensitive": true,
-        "comment": "[",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\[",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": "H:\\Downloads\\PhonPuncTest2\\LeftBracket-.wav"
-    },
-    {
-        "builtInWavFile": "punctuation\\RightBracket.wav",
-        "caseSensitive": true,
-        "comment": "]",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\]",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": "H:\\Downloads\\PhonPuncTest2\\RightBracket-.wav"
-    },
-    {
-        "builtInWavFile": "3d\\ellipses.wav",
-        "caseSensitive": false,
-        "comment": "...",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\.{3,}",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "chimes\\close-object.wav",
-        "caseSensitive": true,
-        "comment": ".",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 50,
-        "pattern": "\\.(?!\\d)",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "chimes\\delete-object.wav",
-        "caseSensitive": false,
-        "comment": "",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 100,
-        "pattern": ",",
-        "ruleType": "builtInWave",
-        "startAdjustment": 5,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "chimes\\yank-object.wav",
-        "caseSensitive": false,
-        "comment": "?",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\?",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "3d\\window-resize.wav",
-        "caseSensitive": true,
-        "comment": "",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "^blank$",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "punctuation\\LeftBrace.wav",
-        "caseSensitive": true,
-        "comment": "{",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\{",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "punctuation\\RightBrace.wav",
-        "caseSensitive": true,
-        "comment": "}",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "\\}",
-        "ruleType": "builtInWave",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "",
-        "caseSensitive": true,
-        "comment": "Capital",
-        "duration": 50,
-        "enabled": false,
-        "endAdjustment": 0,
-        "pattern": "(\\b|(?<=[_a-z]))[A-Z][a-z]+(\\b|(?=[_A-Z]))",
-        "prosodyMultiplier": null,
-        "prosodyName": "Pitch",
-        "prosodyOffset": 10,
-        "ruleType": "prosody",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    },
-    {
-        "builtInWavFile": "",
-        "caseSensitive": true,
-        "comment": "ALL_CAPITAL",
-        "duration": 50,
-        "enabled": true,
-        "endAdjustment": 0,
-        "pattern": "(\\b|(?<=[_a-z]))[A-Z]{2,}(\\b|(?=_)|(?=[A-Z][a-z]))",
-        "prosodyMultiplier": null,
-        "prosodyName": "Pitch",
-        "prosodyOffset": 20,
-        "ruleType": "prosody",
-        "startAdjustment": 0,
-        "tone": 500,
-        "wavFile": ""
-    }
-]
 """.replace("\\", "\\\\")
 def initConfiguration():
     confspec = {
         "enabled" : "boolean( default=True)",
-        "rules" : "string( default='')",
     }
     config.conf.spec[pp] = confspec
 
@@ -426,14 +146,32 @@ class PpBeepCommand(PpSynchronousCommand):
         ppSynchronousPlayer.stop()
 
 class PpWaveFileCommand(PpSynchronousCommand):
-    def __init__(self, fileName, startAdjustment=0, endAdjustment=0):
+    def __init__(self, fileName, startAdjustment=0, endAdjustment=0, volume=100):
         self.fileName = fileName
         self.startAdjustment = startAdjustment
         self.endAdjustment = endAdjustment
+        self.volume = volume
         self.f = wave.open(self.fileName,"r")
         f = self.f
         if self.f is None:
             raise RuntimeError("can not open file %s"%self.fileName)
+        if f.getsampwidth() != 2:
+            bits = f.getsampwidth() * 8
+            raise RuntimeError(f"We only support 16-bit encoded wav files. '{fileName}' is encoded with {bits} bits per sample.")
+        buf =  f.readframes(f.getnframes())
+        bufSize = len(buf)
+        n = bufSize//2
+        unpacked = struct.unpack(f"<{n}h", buf)
+        unpacked = list(unpacked)
+        for i in range(n):
+            unpacked[i] = int(unpacked[i] * volume/100)
+        if self.startAdjustment > 0:
+            pos = self.startAdjustment * f.getframerate() // 1000
+            pos *= f.getnchannels()
+            unpacked = unpacked[pos:]
+            n = len(unpacked)
+        packed = struct.pack(f"<{n}h", *unpacked)
+        self.buf = packed
         self.fileWavePlayer = nvwave.WavePlayer(channels=f.getnchannels(), samplesPerSec=f.getframerate(),bitsPerSample=f.getsampwidth()*8, outputDevice=config.conf["speech"]["outputDevice"],wantDucking=False)
 
     def run(self):
@@ -442,14 +180,11 @@ class PpWaveFileCommand(PpSynchronousCommand):
         if self.startAdjustment < 0:
             time.sleep(-self.startAdjustment / 1000.0)
         elif self.startAdjustment > 0:
-            pos = self.startAdjustment * f.getframerate() // 1000
-            try:
-                f.setpos(pos)
-            except wave.Error:
-                f.setpos(f.getnframes() - 1)
+            # this is now handled in __init__
+            pass
         fileWavePlayer = self.fileWavePlayer
         fileWavePlayer.stop()
-        fileWavePlayer.feed(f.readframes(f.getnframes()))
+        fileWavePlayer.feed(self.buf)
         fileWavePlayer.idle()
 
     def getDuration(self):
@@ -508,6 +243,15 @@ def getSoundsPath():
     return soundsPath
 
 
+if True:
+    wavFile = os.path.join(getSoundsPath(), r"unspoken\button.wav")
+    buttonCommand = PpWaveFileCommand(
+        wavFile,
+        startAdjustment=0,
+        endAdjustment=0,
+        volume=100,
+    )
+
 audioRuleBuiltInWave = "builtInWave"
 audioRuleWave = "wave"
 audioRuleBeep = "beep"
@@ -520,7 +264,7 @@ audioRuleTypes = [
 ]
 
 class AudioRule:
-    jsonFields = "comment pattern ruleType wavFile builtInWavFile tone duration enabled caseSensitive startAdjustment endAdjustment prosodyName prosodyOffset prosodyMultiplier".split()
+    jsonFields = "comment pattern ruleType wavFile builtInWavFile tone duration enabled caseSensitive startAdjustment endAdjustment prosodyName prosodyOffset prosodyMultiplier volume".split()
     def __init__(
         self,
         comment,
@@ -537,6 +281,7 @@ class AudioRule:
         prosodyName=None,
         prosodyOffset=None,
         prosodyMultiplier=None,
+        volume=100,
     ):
         self.comment = comment
         self.pattern = pattern
@@ -552,6 +297,7 @@ class AudioRule:
         self.prosodyName = prosodyName
         self.prosodyOffset = prosodyOffset
         self.prosodyMultiplier = prosodyMultiplier
+        self.volume = volume
         self.regexp = re.compile(self.pattern)
         self.speechCommand, self.postSpeechCommand = self.getSpeechCommand()
 
@@ -582,10 +328,11 @@ class AudioRule:
             return PpWaveFileCommand(
                 wavFile,
                 startAdjustment=self.startAdjustment,
-                endAdjustment=self.endAdjustment
+                endAdjustment=self.endAdjustment,
+                volume=self.volume,
             ), None
         elif self.ruleType == audioRuleBeep:
-            return PpBeepCommand(self.tone, self.duration), None
+            return PpBeepCommand(self.tone, self.duration, left=self.volume, right=self.volume), None
         elif self.ruleType == audioRuleProsody:
             className = self.prosodyName
             className = className[0].upper() + className[1:] + 'Command'
@@ -614,7 +361,10 @@ class AudioRule:
     def processStringInternal(self, s, symbolLevel, language):
         index = 0
         for match in self.regexp.finditer(s):
-            if speech.isBlank(speech.processText(language,match.group(0), symbolLevel)):
+            if (
+                not speech.isBlank(match.group(0))
+                and speech.isBlank(speech.processText(language,match.group(0), symbolLevel))
+            ):
                 # Current punctuation level indicates that punctuation mark matched will not be pronounced, therefore skipping it.
                 continue
             yield s[index:match.start(0)]
@@ -628,7 +378,7 @@ class AudioRule:
 
 rulesDialogOpen = False
 rules = []
-rulesFileName = os.path.join(globalVars.appArgs.configPath, "phoneticPunctuationRules.json")
+rulesFileName = os.path.join(globalVars.appArgs.configPath, "earconFrenzyRules.json")
 def reloadRules():
     global rules
     try:
@@ -649,7 +399,7 @@ def reloadRules():
 
 
 initConfiguration()
-reloadRules()
+#reloadRules()
 addonHandler.initTranslation()
 
 
@@ -730,6 +480,14 @@ class AudioRuleDialog(wx.Dialog):
         self._browseButton = sHelper.addItem (wx.Button (self, label = _("&Browse...")))
         self._browseButton.Bind(wx.EVT_BUTTON, self._onBrowseClick)
         self.typeControls[audioRuleWave].append(self._browseButton)
+      # Volume slider
+        label = _("Volume")
+        self.volumeSlider = sHelper.addLabeledControl(label, wx.Slider, minValue=0,maxValue=100)
+        self.volumeSlider.SetValue(100)
+        self.typeControls[audioRuleWave].append(self.volumeSlider)
+        self.typeControls[audioRuleBuiltInWave].append(self.volumeSlider)
+        self.typeControls[audioRuleBeep].append(self.volumeSlider)
+
       # Translators: label for adjust start
         label = _("Start adjustment in millis - positive to cut off start, negative for extra pause in the beginning.")
         self.startAdjustmentTextCtrl=sHelper.addLabeledControl(label, wx.TextCtrl)
@@ -804,6 +562,7 @@ class AudioRuleDialog(wx.Dialog):
         self.setType(rule.ruleType)
         self.wavName.SetValue(rule.wavFile)
         self.setBiw(rule.builtInWavFile)
+        self.volumeSlider.SetValue(rule.volume or 100)
         self.startAdjustmentTextCtrl.SetValue(str(rule.startAdjustment or 0))
         self.endAdjustmentTextCtrl.SetValue(str(rule.endAdjustment or 0))
         self.toneTextCtrl.SetValue(str(rule.tone or 500))
@@ -908,7 +667,7 @@ class AudioRuleDialog(wx.Dialog):
                     prosodyMultiplier = None
                     good = True
                 else:
-                    prosodyMultiplier = float(self.prosodyOffsetTextCtrl.GetValue())
+                    prosodyMultiplier = float(self.prosodyMultiplierTextCtrl.GetValue())
                     if .1 <= prosodyMultiplier <= 10:
                         good = True
             except ValueError:
@@ -943,7 +702,7 @@ class AudioRuleDialog(wx.Dialog):
                 prosodyName=self.PROSODY_LABELS[self.prosodyNameCategory.control.GetSelection()],
                 prosodyOffset=prosodyOffset,
                 prosodyMultiplier=prosodyMultiplier,
-                #caseSensitive=bool(self.caseSensitiveCheckBox.GetValue()),
+                volume=self.volumeSlider.Value or 100,
             )
         except Exception as e:
             log.error("Could not add Audio Rule", e)
@@ -990,10 +749,13 @@ class AudioRuleDialog(wx.Dialog):
                 return
             preText = _("Hello")
             postText = _("world")
-            if not repeat:
-                utterance = [preText, rule.getSpeechCommand(), postText]
+            preCommand, postCommand = rule.getSpeechCommand()
+            if postCommand is not None:
+                utterance = [preText, preCommand, postText, postCommand]
+            elif not repeat:
+                utterance = [preText, preCommand, postText]
             else:
-                utterance = [preText] + [rule.getSpeechCommand()] * 3 + [postText]
+                utterance = [preText] + [preCommand] * 3 + [postText]
             speech.cancelSpeech()
             speech.speak(utterance)
         finally:
@@ -1059,12 +821,9 @@ class AudioRuleDialog(wx.Dialog):
         ct = self.getType()
         [control.Enable() for control in self.typeControls[ct]]
 
-class RulesDialog(gui.SettingsDialog):
+class RulesDialog(SettingsPanel):
     # Translators: Title for the settings dialog
-    title = _("Phonetic Punctuation  rules")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    title = _("Earcon Frenzy  rules")
 
     def makeSettings(self, settingsSizer):
         global rulesDialogOpen
@@ -1198,7 +957,7 @@ class RulesDialog(gui.SettingsDialog):
             index=self.rulesList.GetNextSelected(index)
         self.rulesList.SetFocus()
 
-    def onOk(self, evt):
+    def onSave(self):
         global rulesDialogOpen
         rulesDialogOpen = False
         rulesDicts = [rule.asDict() for rule in self.rules]
@@ -1209,36 +968,45 @@ class RulesDialog(gui.SettingsDialog):
         finally:
             rulesFile.close()
         reloadRules()
-        super().onOk(evt)
 
-    def onCancel(self,evt):
+    def onDiscard(self):
         global rulesDialogOpen
         rulesDialogOpen = False
-        super().onCancel(evt)
 
-originalSpeechSpeak = None
-originalSpeechSpeechSpeak = None
+original_getPropertiesSpeech = None
 originalSpeechCancel = None
+originalTonesInitialize = None
 
-def preSpeak(speechSequence, symbolLevel=None, *args, **kwargs):
+def new_getPropertiesSpeech(
+        reason: OutputReason = OutputReason.QUERY,
+        **propertyValues
+):
+    #tones.beep(500, 50)
     if config.conf[pp]["enabled"] and not rulesDialogOpen:
-        if symbolLevel is None:
-            symbolLevel=config.conf["speech"]["symbolLevel"]
-        newSequence = speechSequence
-        for rule in rules:
-            newSequence = processRule(newSequence, rule, symbolLevel)
-        newSequence = postProcessSynchronousCommands(newSequence, symbolLevel)
-        #mylog("Speaking!")
-        mylog(str(newSequence))
-    else:
-        newSequence = speechSequence
-    return originalSpeechSpeak(newSequence, symbolLevel=symbolLevel, *args, **kwargs)
+        role = propertyValues.get('role')
+        states = propertyValues.get('states')
+        if role is not None and states is  None:
+            # Speaking role
+            if role == Role.BUTTON:
+                return [buttonCommand]
+        elif role is not None and states is not None:
+            #speaking states
+            pass
+    return original_getPropertiesSpeech(        reason, **propertyValues)
 
 def preCancelSpeech(*args, **kwargs):
     localCurrentChain = currentChain
     if localCurrentChain is not None:
         localCurrentChain.terminate()
     originalSpeechCancel(*args, **kwargs)
+
+def preTonesInitialize(*args, **kwargs):
+    result = originalTonesInitialize(*args, **kwargs)
+    try:
+        reloadRules()
+    except Exception as e:
+        log.error("Error while reloading earcon frenzy rules", e)
+    return result
 
 def processRule(speechSequence, rule, symbolLevel):
     language=speech.getCurrentLanguage()
@@ -1292,7 +1060,7 @@ def eloquenceFix(speechSequence, language, symbolLevel):
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
-    scriptCategory = _("Phonetic Punctuation")
+    scriptCategory = _("Earcon Frenzy")
 
     def __init__(self, *args, **kwargs):
         super(GlobalPlugin, self).__init__(*args, **kwargs)
@@ -1300,42 +1068,32 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.injectSpeechInterceptor()
 
     def createMenu(self):
-        def _popupMenu(evt):
-            gui.mainFrame._popupSettingsDialog(RulesDialog)
-        self.prefsMenuItem = gui.mainFrame.sysTrayIcon.preferencesMenu.Append(wx.ID_ANY, _("Phonetic Punctuation and Audio Rules..."))
-        gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, _popupMenu, self.prefsMenuItem)
-
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(RulesDialog)
 
     def terminate(self):
         self.restoreSpeechInterceptor()
-        prefMenu = gui.mainFrame.sysTrayIcon.preferencesMenu
-        prefMenu.Remove(self.prefsMenuItem)
+        gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(RulesDialog)
 
     def injectSpeechInterceptor(self):
-        global originalSpeechSpeak, originalSpeechSpeechSpeak, originalSpeechCancel
-        originalSpeechSpeak = speech.speak
-        speech.speak = preSpeak
-        try:
-            originalSpeechSpeechSpeak = speech.speech.speak
-            speech.speech.speak = preSpeak
-        except AttributeError:
-            originalSpeechSpeechSpeak = None
-        
+        global original_getPropertiesSpeech, originalSpeechCancel, originalTonesInitialize
+        original_getPropertiesSpeech = speech.speech.getPropertiesSpeech
+        speech.speech.getPropertiesSpeech = new_getPropertiesSpeech
         originalSpeechCancel = speech.cancelSpeech
         speech.cancelSpeech = preCancelSpeech
+        originalTonesInitialize = tones.initialize
+        tones.initialize = preTonesInitialize
 
     def  restoreSpeechInterceptor(self):
-        global originalSpeechSpeak, originalSpeechSpeechSpeak, originalSpeechCancel
-        speech.speak = originalSpeechSpeak
-        if originalSpeechSpeechSpeak is not None:
-            speech.speech.speak = originalSpeechSpeechSpeak
+        global original_getPropertiesSpeech, originalSpeechCancel, originalTonesInitialize
+        speech.speech.getPropertiesSpeech = original_getPropertiesSpeech
         speech.cancelSpeech = originalSpeechCancel
+        tones.initialize = originalTonesInitialize
 
-    @script(description='Toggle phonetic punctuation.', gestures=['kb:NVDA+Alt+p'])
+    @script(description='Toggle Earcon Frenzy.', gestures=['kb:NVDA+Alt+f'])
     def script_togglePp(self, gesture):
         config.conf[pp]["enabled"] = not config.conf[pp]["enabled"]
         if config.conf[pp]["enabled"]:
-            msg = _("Phonetic punctuation on")
+            msg = _("Earcon Frenzy on")
         else:
-            msg = _("Phonetic punctuation off")
+            msg = _("Earcon Frenzy off")
         ui.message(msg)
