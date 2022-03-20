@@ -7,6 +7,7 @@
 import addonHandler
 import api
 import bisect
+import collections
 import config
 import controlTypes
 from controlTypes import OutputReason, Role, State
@@ -32,6 +33,7 @@ import re
 from scriptHandler import script, willSayAllResume
 import speech
 import speech.commands
+from speech.speech import SpeakTextInfoState
 import sre_constants
 import struct
 import textInfos
@@ -56,6 +58,27 @@ def mylog(s):
 def myAssert(condition):
     if not condition:
         raise RuntimeError("Assertion failed")
+
+def prettyFields(fields):
+    lines = []
+    ff = fields
+    for i,f in enumerate(ff):
+        if isinstance(f, str):
+            lines.append(f)
+            continue
+        if isinstance(f, speech.commands.SpeechCommand):
+            lines.append(str(f))
+            continue
+        s = f.command
+        if f.command=='controlStart':
+            s = f"{s} {str(Role(f.field['role']))}"
+            try:
+                s = f"{s} l{f.field['level']}"
+            except KeyError:
+                pass
+        s = f"{i}. {s}"
+        lines.append(s)
+    return "\n".join(lines)
 
 class Worker(Thread):
     """ Thread executing tasks from a given tasks queue """
@@ -265,6 +288,13 @@ if True:
         endAdjustment=0,
         volume=100,
     )
+    wavFile = os.path.join(getSoundsPath(), r"chimes\help.wav")
+    headingCommand = PpWaveFileCommand(
+        wavFile,
+        startAdjustment=0,
+        endAdjustment=0,
+        volume=100,
+    )
 
 audioRuleBuiltInWave = "builtInWave"
 audioRuleWave = "wave"
@@ -357,7 +387,7 @@ class AudioRule:
                 preCommand = classClass(multiplier=self.prosodyMultiplier)
             postCommand = classClass()
             return preCommand, postCommand
-            
+
         else:
             raise ValueError()
 
@@ -987,10 +1017,267 @@ class RulesDialog(SettingsPanel):
         global rulesDialogOpen
         rulesDialogOpen = False
 
+original_getTextInfoSpeech = None
 original_getPropertiesSpeech = None
 original_processAndLabelStates = None
 originalSpeechCancel = None
 originalTonesInitialize = None
+
+class FakeTextInfo(textInfos.TextInfo):
+    def __init__(self, originalInfo, fields):
+        self.originalInfo = originalInfo
+        self.fields = fields
+        super().__init__(originalInfo.obj, None)
+
+    def getTextWithFields(self, formatConfig= None):
+        return self.fields
+    def _get_bookmark(self):
+        raise NotImplementedError
+    def compareEndPoints(self,other,which):
+        raise NotImplementedError
+    def copy(self):
+        raise NotImplementedError
+    def expand(self,unit):
+        raise NotImplementedError
+    def move(self,unit,direction,endPoint=None):
+        raise NotImplementedError
+    def setEndPoint(self,other,which):
+        raise NotImplementedError
+    def _get_text(self) -> str:
+        raise NotImplementedError
+
+def processHeadings(
+        fields,
+        newCommands,
+        controlEnds,
+        controlTail,
+        frenzyCache,
+        unit ,
+        reason,
+        skipIndices,
+):
+    # Processing headings level 1
+    frenzyLevel = frenzyCache.get('level')
+    frenzyCache['level'] = None
+    for i, field in enumerate(fields):
+        try:
+            if field.command != 'controlStart':
+                continue
+            if field.field['role'] != Role.HEADING:
+                continue
+            level = int(field.field['level'])
+            if level != 1:
+                continue
+        except (AttributeError, KeyError, ValueError):
+            continue
+        # At this point we're at the start of heading level 1
+        start = i
+        end = controlEnds[i]
+
+        skipIndices.add(start)
+        skipIndices.add(end)
+        mylog(f"reason={OutputReason(reason)} unit={unit} level={level} frenzyLevel={frenzyLevel}")
+        if(
+            reason in [OutputReason.FOCUS, OutputReason.QUICKNAV]
+            or unit in (textInfos.UNIT_LINE, textInfos.UNIT_PARAGRAPH)
+            or level != frenzyLevel
+        ):
+            #tones.beep(500, 50)
+            #headingCommand.run()
+            frenzyLevel = level
+            newCommands[start].append(headingCommand)
+        frenzyCache['level'] = level if end >= controlTail else None
+    return None, None
+
+def computeControlEnds(fields):
+    # Returns dict mapping from begin index of a control field to end index.
+    stack = []
+    result = {}
+    for i, field in enumerate(fields):
+        try:
+            if field.command == 'controlStart':
+                stack.append(i)
+            elif field.command == 'controlEnd':
+                try:
+                    begin = stack.pop()
+                except IndexError as e:
+                    api.ff = fields
+                    raise RuntimeError("Empty stack of control fields!", e)
+                result[begin] = i
+        except AttributeError:
+            continue
+    if len(stack) != 0:
+        raise RuntimeError("Control field stack is not empty!")
+    return result
+
+def computeControlTail(fields):
+    # Control Tail is the index after which we only see controlEnd fields
+    for i in range(len(fields) - 1, -1, -1):
+        try:
+            if fields[i].command != 'controlEnd':
+                return i + 1
+        except AttributeError:
+            return i + 1
+    raise RuntimeError("Malformed textInfo fields!")
+
+def SplitFields(
+        info,
+        fields,
+        newCommands,
+        skipIndices,
+):
+    stack = []
+    lastFormatField = None
+    chunk = []
+    meaningfulChunk = False
+    breakIndices = set([k for k,v in newCommands.items() if len(v) > 0])
+    for i, field in itertools.chain(
+        enumerate(fields),
+        [(None, None)],
+    ):
+        if (
+            i in breakIndices
+            or i is None
+        ):
+            if meaningfulChunk:
+                yield FakeTextInfo(
+                    info,
+                    chunk
+                    + [textInfos.FieldCommand('controlEnd', None)] * len(stack)
+                )
+                chunk = stack[:]
+                if lastFormatField is not None:
+                    chunk.append(lastFormatField)
+            meaningfulChunk = False
+            if i is not None:
+                yield newCommands[i]
+            else:
+                break
+        if i  in skipIndices:
+            continue
+        chunk.append(field)
+        if isinstance(field, str):
+            meaningfulChunk = True
+        elif not isinstance(field, textInfos.FieldCommand):
+            # We don't know what's that.
+            meaningfulChunk = True
+        elif field.command == 'formatChange':
+            lastFormatField = field
+        elif field.command == 'controlStart':
+            stack.append(field)
+        elif field.command == 'controlEnd':
+            stack.pop()
+        else:
+            raise RuntimeError(f"Unknown command {type(field)} {field}")
+
+
+def new_getTextInfoSpeech(
+        info: textInfos.TextInfo,
+        useCache = True,
+        formatConfig = None,
+        unit = None,
+        reason: OutputReason = OutputReason.QUERY,
+        _prefixSpeechCommand = None,
+        onlyInitialFields = False,
+        suppressBlanks = False,
+):
+    if (
+        not config.conf[pp]["enabled"]
+        or rulesDialogOpen
+        or onlyInitialFields
+    ):
+        yield from original_getTextInfoSpeech(
+            info,
+            useCache ,
+            formatConfig ,
+            unit ,
+            reason,
+            _prefixSpeechCommand ,
+            onlyInitialFields ,
+            suppressBlanks ,
+        )
+        return
+    mylog(f"useCache={useCache}")
+    if isinstance(useCache,SpeakTextInfoState):
+        speakTextInfoState=useCache
+    elif useCache:
+        speakTextInfoState=SpeakTextInfoState(info.obj)
+    else:
+        speakTextInfoState=None
+    mylog("speakInfoState in the beginning")
+    mylog(speakTextInfoState.formatFieldAttributesCache)
+    try:
+        frenzyCache = speakTextInfoState.formatFieldAttributesCache['frenzyCache']
+    except (AttributeError, KeyError):
+        frenzyCache = {}
+    extraDetail=unit in (textInfos.UNIT_CHARACTER,textInfos.UNIT_WORD)
+    if not formatConfig:
+        formatConfig=config.conf["documentFormatting"]
+    formatConfig=formatConfig.copy()
+    if extraDetail:
+        formatConfig['extraDetail']=True
+
+    fields = info.getTextWithFields(formatConfig)
+    mylog("original fields :")
+    mylog(prettyFields(fields))
+    mylog(frenzyCache)
+
+    funcs = [processHeadings]
+    controlEnds = computeControlEnds(fields)
+    controlTail = computeControlTail(fields)
+    newCommands = collections.defaultdict(list)
+    skipIndices = set()
+    for func in funcs:
+        func(
+            fields,
+            newCommands,
+            controlEnds,
+            controlTail,
+            frenzyCache,
+            unit ,
+            reason,
+            skipIndices,
+        )
+    mylog("newCommands and frenzyCache:")
+    mylog(newCommands)
+    mylog(frenzyCache)
+    mylog("Split done and returning")
+    for item in SplitFields(
+            info,
+            fields,
+            newCommands,
+            skipIndices,
+    ):
+        if isinstance(item, FakeTextInfo):
+            cond = item.obj == info.obj
+            mylog(f"cond = {cond}")
+            mylog(f"item.obj = {item.obj}")
+            mylog(f"info.obj={info.obj}")
+            mylog("Calling original on:")
+            mylog(prettyFields(item.getTextWithFields()))
+            yield from original_getTextInfoSpeech(
+                    item,
+                    useCache ,
+                    formatConfig,
+                    unit,
+                    reason,
+                    _prefixSpeechCommand,
+                    onlyInitialFields,
+                    suppressBlanks,
+            )
+            _prefixSpeechCommand = None
+        else:
+            mylog("Returning commands")
+            mylog(prettyFields(item))
+            yield item
+    if isinstance(useCache,SpeakTextInfoState):
+        speakTextInfoState.formatFieldAttributesCache['frenzyCache'] = frenzyCache
+    elif useCache:
+        speakTextInfoState=SpeakTextInfoState(info.obj)
+        speakTextInfoState.formatFieldAttributesCache['frenzyCache'] = frenzyCache
+        mylog("speakInfoState in the end")
+        mylog(speakTextInfoState.formatFieldAttributesCache)
+        speakTextInfoState.updateObj()
 
 def new_getPropertiesSpeech(
         reason: OutputReason = OutputReason.QUERY,
@@ -1009,7 +1296,7 @@ def new_getPropertiesSpeech(
                 #return [buttonCommand]
                 #tones.beep(500, 50)
                 propertyValues['roleText'] = buttonCommand
-                
+
         elif states is not None or negativeStates:
             #speaking states
             if states is None:
@@ -1022,7 +1309,7 @@ def new_getPropertiesSpeech(
                 mylog(propertyValues)
             pass
     return original_getPropertiesSpeech(        reason, **propertyValues)
-    
+
 def new_processAndLabelStates(
         role: Role,
         states,
@@ -1047,7 +1334,7 @@ def new_processAndLabelStates(
         negativeStateLabelDict,
     )
 
-    
+
 
 
 def preCancelSpeech(*args, **kwargs):
@@ -1131,7 +1418,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(RulesDialog)
 
     def injectSpeechInterceptor(self):
-        global original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
+        global original_getTextInfoSpeech, original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
+        original_getTextInfoSpeech = speech.speech.getTextInfoSpeech
+        speech.speech.getTextInfoSpeech = new_getTextInfoSpeech
         original_getPropertiesSpeech = speech.speech.getPropertiesSpeech
         speech.speech.getPropertiesSpeech = new_getPropertiesSpeech
         original_processAndLabelStates = controlTypes.processAndLabelStates
@@ -1142,7 +1431,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         tones.initialize = preTonesInitialize
 
     def  restoreSpeechInterceptor(self):
-        global original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
+        global original_getTextInfoSpeech, original_getPropertiesSpeech, original_processAndLabelStates, originalSpeechCancel, originalTonesInitialize
+        speech.speech.getTextInfoSpeech = original_getTextInfoSpeech
         speech.speech.getPropertiesSpeech = original_getPropertiesSpeech
         controlTypes.processAndLabelStates = original_processAndLabelStates
         speech.cancelSpeech = originalSpeechCancel
