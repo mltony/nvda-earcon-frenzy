@@ -1089,6 +1089,42 @@ def processHeadings(
         frenzyCache['level'] = level if end >= controlTail else None
     return None, None
 
+def processBold(
+        fields,
+        newCommands,
+        controlEnds,
+        controlTail,
+        frenzyCache,
+        unit ,
+        reason,
+        skipIndices,
+):
+    frenzyBold = frenzyCache.get('bold')
+    oldBold = None
+    for i, field in enumerate(fields):
+        try:
+            if field.command != 'formatChange':
+                continue
+            bold = bool(field.field['bold'])
+        except (AttributeError, KeyError, ValueError):
+            continue
+        # At this point we're at the format change command
+        del field.field['bold']
+        if bold != frenzyBold:
+            # Here insert wave command if needed
+            frenzyBold = bold
+        if bold != oldBold:
+            if bold:
+                newCommands[i].append(speech.commands.PitchCommand(offset=-10))
+            elif oldBold:
+                newCommands[i].append(speech.commands.PitchCommand(offset=10))
+            else:
+                #bold == False and oldBold is None
+                pass
+            oldBold = bold
+    newCommands[None].append(speech.commands.PitchCommand(multiplier=1))
+    frenzyCache['bold'] = oldBold 
+
 def computeControlEnds(fields):
     # Returns dict mapping from begin index of a control field to end index.
     stack = []
@@ -1149,9 +1185,9 @@ def SplitFields(
                 if lastFormatField is not None:
                     chunk.append(lastFormatField)
             meaningfulChunk = False
-            if i is not None:
+            if len(newCommands[i]) > 0:
                 yield newCommands[i]
-            else:
+            if i is None:
                 break
         if i  in skipIndices:
             continue
@@ -1222,7 +1258,7 @@ def new_getTextInfoSpeech(
     mylog(prettyFields(fields))
     mylog(frenzyCache)
 
-    funcs = [processHeadings]
+    funcs = [processHeadings, processBold]
     controlEnds = computeControlEnds(fields)
     controlTail = computeControlTail(fields)
     newCommands = collections.defaultdict(list)
